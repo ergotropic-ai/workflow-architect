@@ -46,7 +46,16 @@ sandboxes can be deleted at any time.
     non-empty `permissions.deny`, registers `PreToolUse` hooks, and the
     hook commands reference the substituted guard filename.
   - The four markdown templates' frontmatter parses after substitution.
-- **[B] Behavioral: `workflow-guard.ps1` as shipped** (rendered from the
+- **[P] Portability** — a generated workflow gets committed and cloned onto
+  other OSes, so no rendered artifact may encode the generating host. Checks
+  that no OS-conditional token (`{{GUARD_HOOK}}`/`{{SHELL}}`) survives, that
+  every hook entry pins `"shell": "bash"` at `workflow-guard.sh` through an
+  explicit `bash` wrapper, that hook paths use `${CLAUDE_PROJECT_DIR}` with
+  forward slashes, that rendering is deterministic, and that the generated
+  README documents the `.sh` guard and its `jq` requirement. The `Bash|PowerShell`
+  matcher and the `PowerShell(...)` deny rule are asserted to *remain* — which
+  tool Claude may invoke depends on the running host, not the generating one.
+- **[B] Behavioral: `workflow-guard.ps1` fallback as shipped** (rendered from the
   template into a sandbox project with an allowlist containing
   `npm install left-pad`; payloads are fed on stdin exactly as Claude Code
   hooks deliver them, with `CLAUDE_PROJECT_DIR` pointing at the sandbox):
@@ -70,7 +79,13 @@ sandboxes can be deleted at any time.
 ### `run-guard-tests.sh`
 
 The same ALLOW/DENY matrix (plus the same hardening probes) against
-`workflow-guard.sh.tmpl`, run under Git Bash. The guard requires `jq`;
+`workflow-guard.sh.tmpl`, run under Git Bash — this is the guard that ships on
+every OS. It closes with a portability section that parses the hook command out
+of the *rendered settings snippet* and runs that exact string the way Claude Code
+does (shell form, `sh -c`), under `sh`, `dash`, and `bash`, and again with the
+guard's exec bit cleared. This is the test that would have caught the OS-leak
+defect: the guard file being correct is worthless if the registration invoking it
+is host-specific. The guard requires `jq`;
 if `jq` is not installed the driver prepends `tests/bin/` to `PATH`, which
 contains a minimal Python shim (`jq_shim.py`) supporting exactly the four
 jq invocations the guard makes. The shim is a test-harness convenience
@@ -110,6 +125,20 @@ above now encode the corrected behavior and are the oracle for it.
    matching uses token boundaries (`echo chocolate` no longer trips
    `choco`); force-push detection catches `-f` in any position plus
    `--force-with-lease`.
+
+5. **The generated workflow encoded the generating machine's OS.** The
+   architect emitted `"shell": "powershell"` and a `workflow-guard.ps1`
+   command when it ran on Windows. That config gets committed; a teammate
+   cloning on Linux got a hook that cannot execute — and per the hooks docs a
+   hook that fails to spawn is a *non-blocking* error that Claude Code proceeds
+   past, so the workflow lost its safety floor silently while its README still
+   promised enforcement. Fixed by making the output OS-neutral: one
+   `workflow-guard.sh`, always registered as `"shell": "bash"` with a
+   `bash "<path>"` wrapper. The wrapper matters because shell form runs under
+   `sh -c` on macOS/Linux and `sh` is dash on Debian/Ubuntu, which cannot parse
+   the guard's bashisms; it also drops the dependency on the exec bit surviving
+   a clone. The `.ps1` remains only as a local, uncommitted fallback for native
+   Windows hosts with no Git Bash.
 
 Note: one test-harness over-broad check was also corrected — the
 placeholder-token validator flagged bare `}}`, which occurs legitimately in

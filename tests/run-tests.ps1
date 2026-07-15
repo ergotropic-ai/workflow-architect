@@ -266,8 +266,6 @@ $sample = @{
     WORKER_MAXTURNS  = '15'
     WORKER_TOOLS     = 'Read, Grep, Glob, Write'
     WORKER_OBJECTIVE = 'Investigate the issue and write findings to the step file.'
-    GUARD_HOOK       = 'workflow-guard.ps1'
-    SHELL            = 'powershell'
 }
 
 foreach ($tf in $tmplFiles) {
@@ -285,7 +283,7 @@ if ($settingsOk) {
     Record TEST 'settings snippet: permissions.deny is a non-empty list' (@($settingsObj.permissions.deny).Count -gt 0) 'permissions.deny empty or absent'
     Record TEST 'settings snippet: PreToolUse hooks registered' (@($settingsObj.hooks.PreToolUse).Count -gt 0) 'hooks.PreToolUse empty or absent'
     $hookCmds = @($settingsObj.hooks.PreToolUse | ForEach-Object { $_.hooks } | ForEach-Object { $_.command })
-    $allRef = @($hookCmds | Where-Object { $_ -notlike '*workflow-guard.ps1*' })
+    $allRef = @($hookCmds | Where-Object { $_ -notlike '*workflow-guard.sh*' })
     Record TEST 'settings snippet: hook commands reference the substituted guard file' ($allRef.Count -eq 0) ("unexpected: " + ($allRef -join ', '))
 }
 
@@ -297,7 +295,88 @@ foreach ($name in @('orchestrator-agent.md.tmpl', 'worker-agent.md.tmpl', 'plan-
 
 # ===========================================================================
 Write-Host ''
-Write-Host '=== [B] Behavioral tests: workflow-guard.ps1 (as shipped) ==='
+Write-Host '=== [P] Portability: generated artifacts must not encode the generating OS ==='
+
+# A workflow designed on one host gets committed and cloned onto another. These
+# tests pin the contract that rendering is host-independent and that nothing in
+# the emitted config names a host-specific interpreter. The matcher and deny rule
+# still mention the PowerShell *tool* on purpose -- which tool Claude may invoke
+# depends on the running host, not the generating one -- so these assertions
+# target the hook's shell/command, never the whole file.
+
+$guardShTmpl  = Join-Path $TmplDir 'workflow-guard.sh.tmpl'
+$guardPsTmpl  = Join-Path $TmplDir 'workflow-guard.ps1.tmpl'
+
+# P1: no OS-conditional tokens survive anywhere in the template set.
+$osTokens = @('GUARD_HOOK', 'SHELL')
+$leaked = @($osTokens | Where-Object { $allTemplateTokens.Contains($_) })
+Record TEST 'no OS-conditional token ({{GUARD_HOOK}}/{{SHELL}}) remains in any template' `
+    ($leaked.Count -eq 0) ("still present: " + ($leaked -join ', '))
+
+# P2/P3/P4: every registered hook entry is bash-pinned and points at the .sh guard.
+if ($settingsOk) {
+    $entries = @($settingsObj.hooks.PreToolUse | ForEach-Object { $_.hooks })
+
+    $badShell = @($entries | Where-Object { $_.shell -ne 'bash' })
+    Record TEST 'settings snippet: every hook entry pins "shell": "bash"' ($badShell.Count -eq 0) `
+        ("entries not pinned to bash: " + (@($badShell | ForEach-Object { "$($_.shell)" }) -join ', '))
+
+    $psRef = @($entries | Where-Object { $_.command -match '(?i)\.ps1|powershell|pwsh|cmd\.exe' })
+    Record TEST 'settings snippet: no hook command names a Windows interpreter' ($psRef.Count -eq 0) `
+        ("host-specific command: " + (@($psRef | ForEach-Object { $_.command }) -join ', '))
+
+    # `sh -c` on macOS/Linux may be dash, which cannot parse the guard; the bash
+    # wrapper is what makes one registration work on every host.
+    $unwrapped = @($entries | Where-Object { $_.command -notmatch '^bash\s+"' })
+    Record TEST 'settings snippet: guard is invoked through an explicit bash wrapper' ($unwrapped.Count -eq 0) `
+        ("not bash-wrapped: " + (@($unwrapped | ForEach-Object { $_.command }) -join ', '))
+
+    $notPortablePath = @($entries | Where-Object { $_.command -match '\\\\|%CLAUDE_PROJECT_DIR%|[A-Za-z]:\\' })
+    Record TEST 'settings snippet: hook paths use ${CLAUDE_PROJECT_DIR} with forward slashes' `
+        ($notPortablePath.Count -eq 0) ("host-specific path: " + (@($notPortablePath | ForEach-Object { $_.command }) -join ', '))
+
+    # The PowerShell *tool* must stay guarded regardless of which shell runs the hook.
+    $matchers = @($settingsObj.hooks.PreToolUse | ForEach-Object { $_.matcher })
+    Record TEST 'settings snippet: a matcher still covers the PowerShell tool' `
+        (@($matchers | Where-Object { $_ -match 'PowerShell' }).Count -gt 0) ("matchers: " + ($matchers -join ' / '))
+    Record TEST 'settings snippet: deny rules still cover PowerShell Remove-Item' `
+        (@($settingsObj.permissions.deny | Where-Object { $_ -match '(?i)^PowerShell\(' }).Count -gt 0) 'PowerShell deny rule missing'
+}
+
+# P5: the agent templates duplicate the hook in frontmatter -- same contract.
+foreach ($name in @('orchestrator-agent.md.tmpl', 'worker-agent.md.tmpl')) {
+    $r = Render (ReadText (Join-Path $TmplDir $name)) $sample
+    Record TEST "$name`: frontmatter hook is bash-pinned at the .sh guard" `
+        (($r -match '(?m)^\s*shell:\s*bash\s*$') -and ($r -match 'workflow-guard\.sh') -and ($r -notmatch 'workflow-guard\.ps1')) `
+        'frontmatter hook still names a host-specific shell or guard'
+    Record TEST "$name`: frontmatter matcher still covers the PowerShell tool" `
+        ($r -match 'matcher:\s*"[^"]*PowerShell') 'matcher no longer covers the PowerShell tool'
+}
+
+# P6: rendering is pure substitution -- same tokens in, identical bytes out, on
+# any host. Nothing may branch on the OS at generation time.
+foreach ($tf in $tmplFiles) {
+    $a = Render (ReadText $tf.FullName) $sample
+    $b = Render (ReadText $tf.FullName) $sample
+    Record TEST "$($tf.Name): rendering is deterministic and host-independent" ($a -ceq $b) 'render differed between passes'
+}
+
+# P7: the generated README must document the guard that is actually registered.
+$readmeRendered = Render (ReadText (Join-Path $TmplDir 'README.md.tmpl')) $sample
+Record TEST 'README.md.tmpl: documents workflow-guard.sh as the installed guard' `
+    ($readmeRendered -match '\.claude/hooks/workflow-guard\.sh') 'README does not name the .sh guard'
+Record TEST 'README.md.tmpl: flags the jq dependency (guard denies without it)' `
+    ($readmeRendered -match '(?i)\bjq\b') 'README omits the jq requirement the guard fails closed on'
+
+# P8: the ps1 fallback still ships for bash-less native Windows, and says so.
+Record TEST 'workflow-guard.ps1.tmpl: still shipped as the bash-less Windows fallback' `
+    ((Test-Path $guardPsTmpl) -and ((ReadText $guardPsTmpl) -match '(?i)fallback')) 'ps1 fallback missing or no longer marked as a fallback'
+Record TEST 'workflow-guard.sh.tmpl: documents the bash-pinned registration' `
+    ((ReadText $guardShTmpl) -match '(?i)"shell":\s*"bash"') 'sh guard header no longer documents its registration'
+
+# ===========================================================================
+Write-Host ''
+Write-Host '=== [B] Behavioral tests: workflow-guard.ps1 fallback (as shipped) ==='
 
 # sandbox
 $SandboxRoot = Join-Path $TestsDir '.sandbox'

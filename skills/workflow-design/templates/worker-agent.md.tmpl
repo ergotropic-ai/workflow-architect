@@ -12,8 +12,8 @@ hooks:
     - matcher: "Bash|PowerShell|Write|Edit|NotebookEdit"
       hooks:
         - type: command
-          shell: {{SHELL}}
-          command: "${CLAUDE_PROJECT_DIR}/.claude/hooks/{{GUARD_HOOK}}"
+          shell: bash
+          command: "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.sh\""
 ---
 
 You are a worker in the **{{WF_TITLE}}** workflow.

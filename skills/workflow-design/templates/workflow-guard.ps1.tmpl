@@ -2,7 +2,13 @@
 # Reads hook JSON from stdin. Blocks by printing a deny decision to stdout and
 # exiting 0. Defers (allows normal flow) by exiting 0 with no JSON.
 #
-# Register in .claude/settings.local.json with:  "shell": "powershell"
+# FALLBACK ONLY. workflow-guard.sh is the guard the generated settings snippet
+# registers on every OS. Use this file only on a native Windows host with no Git
+# for Windows installed, where no bash exists to run the .sh guard. Swap it in
+# locally — never commit the swap, or you re-break the workflow for teammates on
+# other OSes:
+#   "shell": "powershell", "command": "& \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.ps1\""
+# Keep this file's ALLOW/DENY behavior identical to workflow-guard.sh.
 
 $ErrorActionPreference = 'Stop'
 

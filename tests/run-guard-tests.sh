@@ -133,6 +133,83 @@ else
   record TEST "DENY (fail closed) when jq is not installed" 1 "expected deny, got: $(printf '%s' "$jqmiss_out" | head -c 120)"
 fi
 
+# --- portability: the committed registration must work on any host ---------------
+# The suite above runs the guard file directly. This section instead takes the
+# hook command straight out of the rendered settings snippet and runs it the way
+# Claude Code documents: shell form, `sh -c` on macOS/Linux, Git Bash on Windows.
+# A generated workflow gets committed and cloned onto other OSes, so this is the
+# contract that matters -- the guard file being correct is worthless if the
+# registration that invokes it is host-specific.
+echo ""
+echo "=== Portability: rendered settings snippet, invoked as Claude Code would ==="
+
+SNIP_TMPL="$CLAUDE_ROOT/skills/workflow-design/templates/settings-snippet.json.tmpl"
+SNIP="$SBROOT/settings-snippet.json"
+sed 's/{{WF_TITLE}}/Issue Triage/g; s/{{WF}}/triage/g' "$SNIP_TMPL" > "$SNIP"
+
+# Parsed with sed, not jq: the jq here may be the tests/bin shim, which only
+# implements the four filters the guard itself uses. Unescape \" back to " so the
+# command is the string Claude Code would hand the shell.
+HOOK_SHELL="$(sed -n 's/.*"shell"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SNIP" | head -1)"
+HOOK_CMD="$(sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$SNIP" | head -1 | sed 's/\\"/"/g')"
+
+if [ "$HOOK_SHELL" = "bash" ]; then
+  record TEST "settings snippet pins \"shell\": \"bash\" (not the generating host's shell)" 0 ""
+else
+  record TEST "settings snippet pins \"shell\": \"bash\" (not the generating host's shell)" 1 "got shell='$HOOK_SHELL'"
+fi
+
+case "$HOOK_CMD" in
+  *workflow-guard.ps1*|*powershell*|*pwsh*)
+    record TEST "settings snippet hook command names no Windows interpreter" 1 "got '$HOOK_CMD'" ;;
+  *) record TEST "settings snippet hook command names no Windows interpreter" 0 "" ;;
+esac
+
+# $GUARD already sits at the ${CLAUDE_PROJECT_DIR} path the snippet resolves to.
+DENY_PAYLOAD="$(bash_payload 'git push --force origin main')"
+
+if [ -n "$HOOK_CMD" ]; then
+  record TEST "hook command parsed out of the rendered snippet" 0 ""
+else
+  record TEST "hook command parsed out of the rendered snippet" 1 "could not extract .hooks.PreToolUse[].hooks[].command"
+fi
+
+# Run the exact command string under each POSIX shell a host might provide. The
+# guard is not POSIX (arrays, ${x//y/z}), so a bare-path command would break
+# wherever /bin/sh is dash -- and a hook that errors is non-blocking, i.e. it
+# fails OPEN. The bash wrapper in the command string is what prevents that.
+for sh_bin in sh dash bash; do
+  if ! command -v "$sh_bin" >/dev/null 2>&1; then
+    record WARN "rendered hook command denies under $sh_bin" 1 "$sh_bin not installed on this host; path untested"
+    continue
+  fi
+  out="$(printf '%s' "$DENY_PAYLOAD" | CLAUDE_PROJECT_DIR="$PROJ" "$sh_bin" -c "$HOOK_CMD" 2>&1)"
+  if printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; then
+    record TEST "rendered hook command denies force push under $sh_bin -c" 0 ""
+  else
+    record TEST "rendered hook command denies force push under $sh_bin -c" 1 "expected deny, got: $(printf '%s' "$out" | head -c 120)"
+  fi
+done
+
+# Same registration, benign command -> must defer rather than block everything.
+out="$(printf '%s' "$(bash_payload 'echo hello')" | CLAUDE_PROJECT_DIR="$PROJ" sh -c "$HOOK_CMD" 2>&1)"
+if [ -z "$out" ]; then
+  record TEST "rendered hook command allows a benign command under sh -c" 0 ""
+else
+  record TEST "rendered hook command allows a benign command under sh -c" 1 "expected no output, got: $(printf '%s' "$out" | head -c 120)"
+fi
+
+# The guard must not depend on its exec bit surviving a clone (git does not
+# preserve it on a Windows checkout, and the snippet ships to strangers' repos).
+chmod -x "$PROJ/.claude/hooks/workflow-guard.sh"
+out="$(printf '%s' "$DENY_PAYLOAD" | CLAUDE_PROJECT_DIR="$PROJ" sh -c "$HOOK_CMD" 2>&1)"
+if printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; then
+  record TEST "rendered hook command denies even with the guard's exec bit cleared" 0 ""
+else
+  record TEST "rendered hook command denies even with the guard's exec bit cleared" 1 "expected deny, got: $(printf '%s' "$out" | head -c 120)"
+fi
+chmod +x "$PROJ/.claude/hooks/workflow-guard.sh"
+
 # --- summary ---------------------------------------------------------------------
 echo ""
 echo "=== Summary (bash guard) ==="

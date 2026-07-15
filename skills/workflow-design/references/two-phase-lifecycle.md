@@ -55,7 +55,11 @@ Command: `/<wf>-execute`. Runs only in a session started with bypass permissions
 2. The guard hook file exists AND `.claude/settings.local.json` registers the
    `workflow-guard` PreToolUse hook and the deny rules. If missing, install from
    the README snippet and tell the user to restart.
-3. The session was started with bypass permissions (if permission prompts appear,
+3. The guard actually runs on this host — pipe a canary payload through it and
+   confirm it denies. A hook that cannot execute is a non-blocking error that
+   Claude Code proceeds past, so an unverified guard is no guard at all. See
+   `references/enforcement.md`.
+4. The session was started with bypass permissions (if permission prompts appear,
    tell the user to relaunch per the README).
 
 **Self-constraining execution rules (permissions are off):**

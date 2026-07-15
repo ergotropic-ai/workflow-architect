@@ -25,8 +25,12 @@ Merged into the project's `.claude/settings.local.json`. See
 - `Write(~/**)`, `Edit(~/**)` — no writes to home
 - `Read(~/.ssh/**)`, `Read(~/.aws/**)` — no reading secrets
 
-Add PowerShell equivalents where the PowerShell tool is enabled
-(`PowerShell(Remove-Item -Recurse -Force*)` etc.).
+Always include the PowerShell equivalents (`PowerShell(Remove-Item -Recurse
+-Force*)` etc.), not only when generating on Windows. Which *tool* Claude may
+invoke depends on the host that eventually runs the workflow, not on the host that
+designed it — a teammate on native Windows gets the PowerShell tool. This is
+independent of which shell runs the hook: the guard is always bash, and it always
+matches `Bash|PowerShell`.
 
 ## Layer 2 — the guard hook
 
@@ -66,9 +70,49 @@ to Claude), but emitting the JSON deny is clearer.
 3. Otherwise exit 0 (defer). In Phase 1 the normal flow is plan-mode read-only; in
    Phase 2 it is bypass.
 
-Templates: `templates/workflow-guard.ps1.tmpl` (primary on Windows) and
-`templates/workflow-guard.sh.tmpl` (bash). Register the matching one via the
-settings snippet with the correct `"shell"` value.
+### One guard, every OS
+
+Generated artifacts get committed and cloned onto other machines, so the guard
+registration must not encode the OS that generated it. A workflow designed on
+Windows that registers `workflow-guard.ps1` leaves a Linux teammate with a hook
+that cannot execute — and a hook that cannot execute does not block, it is a
+non-blocking error that Claude Code proceeds past. That silently removes the
+workflow's safety floor while the README still promises it.
+
+So `templates/workflow-guard.sh.tmpl` is the guard on every OS, registered once:
+
+```json
+{
+  "type": "command",
+  "shell": "bash",
+  "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.sh\""
+}
+```
+
+Both details are load-bearing:
+
+- **`"shell": "bash"` is explicit.** The field defaults to `bash`, *but to
+  `powershell` on a Windows host with no Git Bash* — which would hand this script
+  to the wrong interpreter. Pinning it keeps one committed config deterministic
+  everywhere.
+- **`bash "<path>"`, not the bare path.** Shell form runs the command under
+  `sh -c` on macOS/Linux, and `sh` is dash on Debian/Ubuntu, which cannot parse
+  the guard. Naming `bash` explicitly also stops the guard depending on its exec
+  bit surviving a clone.
+
+`templates/workflow-guard.ps1.tmpl` stays as a fallback for the one host that has
+no bash at all: native Windows without Git for Windows. It is a local swap, never
+the committed default, and its ALLOW/DENY behavior must stay identical to the
+`.sh` guard.
+
+### The one thing that cannot fail closed
+
+The guard fails closed on its own dependencies — no `jq`, no parse, deny. But if
+the hook process itself cannot spawn, Claude Code reports a non-blocking error and
+**proceeds**; only exit code 2 or a `deny` decision blocks, and a hook that never
+ran produces neither. No hook configuration can close that gap. So the Phase 2
+preflight fires a canary payload through the guard and refuses to execute unless it
+comes back denied. That is where "the guard cannot run here" becomes a stop.
 
 ## Layer 3 — hooks travel with the agents
 

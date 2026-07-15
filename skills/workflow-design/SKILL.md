@@ -38,8 +38,8 @@ carries while designing workflows.
 | `templates/plan-command.md.tmpl` | `/<wf>` Phase-1 plan command. |
 | `templates/execute-command.md.tmpl` | `/<wf>-execute` Phase-2 command. |
 | `templates/settings-snippet.json.tmpl` | Deny rules + hook registration for `.claude/settings.local.json`. |
-| `templates/workflow-guard.sh.tmpl` | Bash guard hook. |
-| `templates/workflow-guard.ps1.tmpl` | PowerShell guard hook (primary on Windows). |
+| `templates/workflow-guard.sh.tmpl` | The guard hook, on every OS. |
+| `templates/workflow-guard.ps1.tmpl` | Fallback guard for native Windows with no Git Bash; never the committed default. |
 | `templates/README.md.tmpl` | Generated-workflow README. |
 
 ## Template substitution tokens
@@ -52,5 +52,8 @@ When filling templates, replace these placeholders:
 - `{{AGENT_ROSTER}}` — bulleted list of generated agents with model tiers.
 - `{{WORKER_NAME}}`, `{{WORKER_MODEL}}`, `{{WORKER_EFFORT}}`,
   `{{WORKER_MAXTURNS}}`, `{{WORKER_TOOLS}}`, `{{WORKER_OBJECTIVE}}` — per worker.
-- `{{GUARD_HOOK}}` — `workflow-guard.ps1` or `workflow-guard.sh` depending on OS.
-- `{{SHELL}}` — `powershell` or `bash`.
+
+There is deliberately no token for the guard filename or the hook shell. Generated
+artifacts get committed and cloned onto other OSes, so they must not encode the
+generating host: every workflow registers `workflow-guard.sh` under
+`"shell": "bash"`, whatever machine designed it. See `references/enforcement.md`.

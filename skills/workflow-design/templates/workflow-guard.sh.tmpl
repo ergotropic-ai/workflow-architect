@@ -5,7 +5,14 @@
 # Requires: jq. If jq is missing the guard fails CLOSED (denies) rather than
 # letting the action through.
 #
-# Register in .claude/settings.local.json without a "shell" field (default bash).
+# This is the guard on every OS. Register it in .claude/settings.local.json as
+#   "shell": "bash", "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.sh\""
+# The explicit "shell": "bash" matters: the field otherwise defaults to
+# powershell on Windows hosts without Git Bash, which would feed this script to
+# the wrong interpreter. The `bash <path>` wrapper matters too: shell form runs
+# under `sh -c` on macOS/Linux, and `sh` is dash on Debian/Ubuntu, which cannot
+# parse this script. Invoking bash explicitly also removes any dependence on the
+# file's exec bit surviving a git clone.
 set -uo pipefail
 
 deny() {

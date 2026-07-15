@@ -63,19 +63,23 @@ and `enforcement.md` (guard-hook recipes, including how they survive
 ## Tests
 
 ```powershell
-.\tests\run-tests.ps1        # 82 tests: structure, frontmatter, templates, guard behavior
+.\tests\run-tests.ps1        # 105 tests: structure, frontmatter, templates, portability, guard behavior
 ```
 
 ```bash
-bash tests/run-guard-tests.sh   # same guard ALLOW/DENY matrix under Git Bash
+bash tests/run-guard-tests.sh   # 41 tests: guard ALLOW/DENY matrix + rendered-config portability
 ```
 
 Both suites are self-contained — no Pester, no installs. The static half checks that
 every system file exists, that frontmatter parses, that every template token is
 documented in `SKILL.md` (and vice versa), and that templates render with no residual
-tokens. The behavioral half runs the rendered guard hook against an ALLOW/DENY matrix
-covering path escapes, destructive git operations, `rm -rf` variants, and package
-installs. See `tests/README.md` for the guard defects these caught.
+tokens. The portability half pins the rule that a generated workflow never encodes the
+OS that generated it: the rendered settings snippet is bash-pinned, names no Windows
+interpreter, and is executed as Claude Code would execute it — under `sh`, `dash`, and
+`bash`, with the guard's exec bit cleared. The behavioral half runs the rendered guard
+hook against an ALLOW/DENY matrix covering path escapes, destructive git operations,
+`rm -rf` variants, and package installs. See `tests/README.md` for the guard defects
+these caught.
 
 Both suites test the **installed** copy under `~/.claude`, so run the installer
 first (set `CLAUDE_HOME` to test a different install root).

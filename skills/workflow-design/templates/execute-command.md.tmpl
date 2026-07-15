@@ -9,11 +9,24 @@ run in a session started with bypass permissions
 PREFLIGHT — refuse to proceed unless ALL of these hold:
 1. `.workflow/plan.md` exists and its first line is `status: approved`. If not,
    STOP: tell the user to run `/{{WF}}` first.
-2. `.claude/hooks/{{GUARD_HOOK}}` exists AND `.claude/settings.local.json`
+2. `.claude/hooks/workflow-guard.sh` exists AND `.claude/settings.local.json`
    registers the workflow-guard PreToolUse hook and the deny rules. If missing,
    install them from README-{{WF}}.md, then tell the user to restart Claude Code
    (hooks load at session start).
-3. The session was started with bypass permissions. If permission prompts appear,
+3. The guard actually RUNS on this host. Verify it rather than assuming: pipe a
+   canary payload through it and confirm it denies —
+
+       echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' \
+         | bash .claude/hooks/workflow-guard.sh
+
+   Expect a `"permissionDecision":"deny"` object. Anything else — no output, a
+   missing-`jq` deny, `bash: command not found` — means this machine has no
+   working guard. STOP. A hook that cannot execute does not block anything;
+   Claude Code logs a non-blocking error and proceeds, so Phase 2 would run
+   unguarded under bypass. Tell the user to fix it per README-{{WF}}.md
+   (install `jq`, or install Git for Windows / swap in `workflow-guard.ps1` on a
+   bash-less Windows host) rather than proceeding.
+4. The session was started with bypass permissions. If permission prompts appear,
    STOP and tell the user to relaunch per the README.
 
 Then delegate to the `{{WF}}-orchestrator` subagent to run the plan.

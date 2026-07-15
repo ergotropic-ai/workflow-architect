@@ -221,9 +221,14 @@ fill in the templates under `templates/`.
     the documented `claude --permission-mode plan` launch.
 - Always generate the README from `templates/README.md.tmpl`, substituting the
   workflow name, the concrete agent roster, and the `.workflow/` layout.
-- On Windows, generate `workflow-guard.ps1` as the primary hook (with
-  `"shell": "powershell"` in the settings snippet); also drop the bash variant
-  for portability. On macOS/Linux, generate the bash variant as primary.
+- **Never let your host OS leak into what you generate.** The files you write get
+  committed and cloned onto other OSes; a workflow designed on Windows must run
+  unchanged for a teammate on Linux. Always generate `workflow-guard.sh` as the
+  guard and always register it as
+  `"shell": "bash"`, `"command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.sh\""`,
+  regardless of the machine you are running on. Also drop
+  `workflow-guard.ps1` alongside it as a documented fallback for native Windows
+  hosts without Git Bash, but never register it in the committed snippet.
 
 ---
 
@@ -235,10 +240,11 @@ Every generated workflow includes, from `templates/`:
    `git clean`, writes to `~`, reads of secrets) merged into the project's
    `.claude/settings.local.json`. Deny rules apply in **every** mode, including
    `bypassPermissions`.
-2. A `PreToolUse` guard hook (`.claude/hooks/workflow-guard.ps1` and/or `.sh`)
-   that: confines Write/Edit to the project + `.workflow/`; blocks destructive
-   git and `rm -rf` outside `.workflow/`; and blocks network/install commands
-   unless matched by `.workflow/allowlist.txt`. Hooks run in every mode.
+2. A `PreToolUse` guard hook (`.claude/hooks/workflow-guard.sh`, plus the `.ps1`
+   fallback) that: confines Write/Edit to the project + `.workflow/`; blocks
+   destructive git and `rm -rf` outside `.workflow/`; and blocks network/install
+   commands unless matched by `.workflow/allowlist.txt`. Hooks run in every mode.
+   The guard requires `jq` and fails closed without it; say so in the README.
 3. The same guard hook duplicated in each worker agent's frontmatter `hooks:`
    block, so enforcement travels with the agents even if project settings are
    absent.

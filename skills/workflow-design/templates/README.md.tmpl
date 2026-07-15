@@ -17,7 +17,7 @@ plan.
 | `~/.claude/agents/{{WF}}-planner.md` | Read-only discovery (plan mode). |
 | `~/.claude/agents/{{WF}}-orchestrator.md` | Runs the approved plan. |
 | `~/.claude/agents/{{WF}}-*.md` | Workers + synthesizer. |
-| `.claude/hooks/{{GUARD_HOOK}}` | PreToolUse guard (mechanical boundaries). |
+| `.claude/hooks/workflow-guard.sh` | PreToolUse guard (mechanical boundaries). |
 | `.claude/settings.local.json` | Deny rules + guard-hook registration. |
 
 ## How to run it
@@ -58,11 +58,27 @@ rules installed? bypass session?) and then runs the plan under the orchestrator.
 Before the first Phase 2 run, make sure the enforcement layer is installed in the
 **target project**:
 
-1. Copy `{{GUARD_HOOK}}` into `<project>/.claude/hooks/` (and, on macOS/Linux,
-   `chmod +x` it).
+1. Copy `workflow-guard.sh` into `<project>/.claude/hooks/`.
 2. Merge the deny rules and hook registration from the settings snippet into
    `<project>/.claude/settings.local.json`.
-3. Restart Claude Code so the hooks load (hooks are read at session start).
+3. Install `jq` if the host lacks it. The guard parses hook JSON with it and
+   **denies every guarded action** until it is present.
+4. Restart Claude Code so the hooks load (hooks are read at session start).
+
+These files are OS-neutral: the same guard and the same registration work on
+macOS, Linux, and Windows, so they are safe to commit and clone across a mixed-OS
+team. The one exception is a **native Windows host with no Git for Windows**,
+which has no bash to run the guard. Either install
+[Git for Windows](https://git-scm.com/downloads/win) (recommended — Claude Code
+wants it for the Bash tool anyway), or swap that machine's local
+`settings.local.json` to the bundled `workflow-guard.ps1`:
+
+```json
+{ "type": "command", "shell": "powershell",
+  "command": "& \"${CLAUDE_PROJECT_DIR}/.claude/hooks/workflow-guard.ps1\"" }
+```
+
+Keep that swap local — committing it breaks the guard for everyone else.
 
 ## Safety warning
 
