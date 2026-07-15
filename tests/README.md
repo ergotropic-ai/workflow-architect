@@ -1,25 +1,27 @@
 # workflow-architect test suite
 
-Tests for the workflow-architect system under `C:\Users\Hszem\.claude\`
+Tests for the workflow-architect system installed under `~/.claude`
 (agent + slash command + workflow-design skill + templates + guard hooks).
-The suite is self-contained: no Pester, no package installs.
+The suite is self-contained: no Pester, no package installs. Set
+`CLAUDE_HOME` to test a different install root.
 
 ## How to run
 
-PowerShell suite (static/structural tests + PowerShell guard behavior):
+PowerShell suite (static/structural tests + PowerShell guard behavior;
+Windows PowerShell 5.1 or pwsh on any OS):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\dev\workflow_architect\tests\run-tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1
 ```
 
-Bash guard suite (Git Bash):
+Bash guard suite (any bash; Git Bash on Windows):
 
 ```bash
-bash /c/dev/workflow_architect/tests/run-guard-tests.sh
+bash tests/run-guard-tests.sh
 ```
 
 Both exit `1` if any counted test fails. Both recreate their scratch
-sandboxes (`tests\.sandbox\`, `tests\.sandbox-bash\`) on every run; the
+sandboxes (`tests/.sandbox/`, `tests/.sandbox-bash/`) on every run; the
 sandboxes can be deleted at any time.
 
 ## What each part covers
@@ -76,12 +78,14 @@ only — see the defect notes below.
 
 ### `bin/jq`, `bin/jq_shim.py`
 
-The jq fallback shim described above. Used only when real jq is absent.
+The jq fallback shim described above. Used only when real jq is absent. The
+wrapper runs whichever python interpreter the host has (`python3`, `python`,
+or the Windows `py` launcher, in that order).
 
 ## Defects found by this suite, and fixed in the templates
 
 All of the following were surfaced by this suite and have since been fixed
-in `C:\Users\Hszem\.claude\skills\workflow-design\templates\`. The tests
+in `~/.claude/skills/workflow-design/templates/`. The tests
 above now encode the corrected behavior and are the oracle for it.
 
 1. **CRITICAL — `workflow-guard.ps1.tmpl` was a complete no-op.** It

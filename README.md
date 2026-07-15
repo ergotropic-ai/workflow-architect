@@ -9,6 +9,16 @@ and generates workflows; it does not execute them.
 
 ## Install
 
+macOS / Linux (or Git Bash on Windows):
+
+```bash
+git clone https://github.com/ergotropic-ai/workflow-architect.git
+cd workflow-architect
+./install.sh           # add --dry-run to preview
+```
+
+Windows PowerShell:
+
 ```powershell
 git clone https://github.com/ergotropic-ai/workflow-architect.git
 cd workflow-architect
@@ -67,8 +77,8 @@ tokens. The behavioral half runs the rendered guard hook against an ALLOW/DENY m
 covering path escapes, destructive git operations, `rm -rf` variants, and package
 installs. See `tests/README.md` for the guard defects these caught.
 
-Note: the suites currently hardcode `C:\Users\Hszem\.claude` and
-`C:\dev\workflow_architect`, so they need those paths to run as-is.
+Both suites test the **installed** copy under `~/.claude`, so run the installer
+first (set `CLAUDE_HOME` to test a different install root).
 
 ## Layout
 
@@ -82,4 +92,5 @@ docs/original-spec.md                                 # the prompt this was buil
 
 `~/.claude` is what Claude Code actually loads; this repo is the source of record.
 Editing the installed copy directly will silently diverge from git. Edit here and
-re-run `install.ps1`, or copy changes back before committing.
+re-run the installer (`install.sh` / `install.ps1`), or copy changes back before
+committing.

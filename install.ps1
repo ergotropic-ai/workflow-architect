@@ -23,9 +23,9 @@ $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
 
 $items = @(
-    @{ From = 'agents\workflow-architect.md';  To = 'agents\workflow-architect.md' }
-    @{ From = 'commands\design-workflow.md';   To = 'commands\design-workflow.md' }
-    @{ From = 'skills\workflow-design';        To = 'skills\workflow-design'; Dir = $true }
+    @{ From = 'agents/workflow-architect.md';  To = 'agents/workflow-architect.md' }
+    @{ From = 'commands/design-workflow.md';   To = 'commands/design-workflow.md' }
+    @{ From = 'skills/workflow-design';        To = 'skills/workflow-design'; Dir = $true }
 )
 
 foreach ($item in $items) {

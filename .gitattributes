@@ -1,0 +1,8 @@
+# Shell scripts (and anything rendered into one) must stay LF or they will not
+# run; everything else normalizes to LF in the repo and follows core.autocrlf
+# in the working tree.
+* text=auto
+*.sh text eol=lf
+*.sh.tmpl text eol=lf
+tests/bin/jq text eol=lf
+tests/bin/jq_shim.py text eol=lf

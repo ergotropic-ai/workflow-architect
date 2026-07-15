@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # run-guard-tests.sh -- behavioral tests for workflow-guard.sh.tmpl (the bash
-# PreToolUse guard) run via Git Bash. Self-contained; if jq is not installed,
-# falls back to the minimal python shim in tests/bin/ (documented in README).
+# PreToolUse guard), run under any bash (Git Bash on Windows). Tests the
+# installed copy under ~/.claude; set CLAUDE_HOME to point elsewhere.
+# Self-contained; if jq is not installed, falls back to the minimal python
+# shim in tests/bin/ (documented in README).
 #
 # Exit code: 1 if any counted test fails, else 0.
 set -u
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMPL="$HOME/.claude/skills/workflow-design/templates/workflow-guard.sh.tmpl"
+CLAUDE_ROOT="${CLAUDE_HOME:-$HOME/.claude}"
+TMPL="$CLAUDE_ROOT/skills/workflow-design/templates/workflow-guard.sh.tmpl"
 
 PASS=0; FAIL=0; WARNS=0
 FAILURES=""
@@ -123,7 +126,7 @@ run_case TEST "DENY git push --force-with-lease"                                
 # fail-closed when jq is absent: strip PATH so no jq/shim is found -> must DENY
 echo ""
 echo "=== jq-missing fail-closed test ==="
-jqmiss_out="$(printf '%s' "$(bash_payload 'echo hi')" | PATH=/usr/bin/nonexistent CLAUDE_PROJECT_DIR="$PROJ" /usr/bin/bash "$GUARD" 2>/dev/null)"
+jqmiss_out="$(printf '%s' "$(bash_payload 'echo hi')" | PATH=/usr/bin/nonexistent CLAUDE_PROJECT_DIR="$PROJ" "$BASH" "$GUARD" 2>/dev/null)"
 if printf '%s' "$jqmiss_out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; then
   record TEST "DENY (fail closed) when jq is not installed" 0 ""
 else

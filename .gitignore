@@ -1,3 +1,4 @@
 # Test sandboxes are recreated on every run
 tests/.sandbox/
 tests/.sandbox-bash/
+__pycache__/

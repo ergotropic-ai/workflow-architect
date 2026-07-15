@@ -1,5 +1,6 @@
-# run-tests.ps1 -- test suite for the workflow-architect system under
-# C:\Users\Hszem\.claude\. Self-contained: no Pester, no installs.
+# run-tests.ps1 -- test suite for the workflow-architect system installed
+# under ~/.claude (set CLAUDE_HOME to point elsewhere). Self-contained: no
+# Pester, no installs. Runs under Windows PowerShell 5.1 or pwsh on any OS.
 #
 # Sections:
 #   [S]  static / structural tests (frontmatter, JSON, token consistency)
@@ -12,10 +13,12 @@
 
 $ErrorActionPreference = 'Stop'
 
-$ClaudeRoot = 'C:\Users\Hszem\.claude'
-$SkillDir   = Join-Path $ClaudeRoot 'skills\workflow-design'
+$ClaudeRoot = if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $HOME '.claude' }
+$SkillDir   = Join-Path $ClaudeRoot 'skills/workflow-design'
 $TmplDir    = Join-Path $SkillDir 'templates'
 $TestsDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
+$IsWinHost  = ($env:OS -eq 'Windows_NT')
+$PsExe      = (Get-Process -Id $PID).Path
 
 $script:Pass = 0; $script:Fail = 0
 $script:DiagPass = 0; $script:DiagFail = 0
@@ -131,7 +134,7 @@ function Check-Frontmatter([string]$name, [string]$text, [string[]]$requiredKeys
 # ---------------------------------------------------------------------------
 function Invoke-Guard([string]$guardPath, [string]$projectDir, [string]$payload) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'powershell.exe'
+    $psi.FileName = $PsExe
     $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$guardPath`""
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
@@ -183,12 +186,12 @@ Write-Host '=== [S] Static / structural tests ==='
 
 # --- S1: inventory ---------------------------------------------------------
 $inventory = @(
-    (Join-Path $ClaudeRoot 'agents\workflow-architect.md'),
-    (Join-Path $ClaudeRoot 'commands\design-workflow.md'),
+    (Join-Path $ClaudeRoot 'agents/workflow-architect.md'),
+    (Join-Path $ClaudeRoot 'commands/design-workflow.md'),
     (Join-Path $SkillDir 'SKILL.md'),
-    (Join-Path $SkillDir 'references\patterns.md'),
-    (Join-Path $SkillDir 'references\two-phase-lifecycle.md'),
-    (Join-Path $SkillDir 'references\enforcement.md'),
+    (Join-Path $SkillDir 'references/patterns.md'),
+    (Join-Path $SkillDir 'references/two-phase-lifecycle.md'),
+    (Join-Path $SkillDir 'references/enforcement.md'),
     (Join-Path $TmplDir 'orchestrator-agent.md.tmpl'),
     (Join-Path $TmplDir 'worker-agent.md.tmpl'),
     (Join-Path $TmplDir 'plan-command.md.tmpl'),
@@ -203,15 +206,15 @@ Record TEST 'all 14 system files exist' ($missing.Count -eq 0) ("missing: " + ($
 if ($missing.Count -gt 0) { Write-Host 'Cannot continue without the system under test.'; exit 1 }
 
 # --- S2: core-file frontmatter ----------------------------------------------
-Check-Frontmatter 'agents/workflow-architect.md' (ReadText (Join-Path $ClaudeRoot 'agents\workflow-architect.md')) @('name', 'description', 'model')
-Check-Frontmatter 'commands/design-workflow.md' (ReadText (Join-Path $ClaudeRoot 'commands\design-workflow.md')) @('description')
+Check-Frontmatter 'agents/workflow-architect.md' (ReadText (Join-Path $ClaudeRoot 'agents/workflow-architect.md')) @('name', 'description', 'model')
+Check-Frontmatter 'commands/design-workflow.md' (ReadText (Join-Path $ClaudeRoot 'commands/design-workflow.md')) @('description')
 Check-Frontmatter 'skills/workflow-design/SKILL.md' (ReadText (Join-Path $SkillDir 'SKILL.md')) @('name', 'description')
 
 # --- S3: the @-include target of the slash command exists -------------------
-$cmdText = ReadText (Join-Path $ClaudeRoot 'commands\design-workflow.md')
+$cmdText = ReadText (Join-Path $ClaudeRoot 'commands/design-workflow.md')
 $includeOk = $false
 if ($cmdText -match '@~([^\s]+)') {
-    $incPath = Join-Path $env:USERPROFILE ($Matches[1].TrimStart('/').Replace('/', '\'))
+    $incPath = Join-Path $HOME ($Matches[1].TrimStart('/'))
     $includeOk = Test-Path $incPath
     Record TEST 'design-workflow.md @-include target exists' $includeOk "resolved '$incPath' not found"
 } else {
@@ -301,35 +304,42 @@ $SandboxRoot = Join-Path $TestsDir '.sandbox'
 if (Test-Path $SandboxRoot) { Remove-Item -Recurse -Force $SandboxRoot -Confirm:$false }
 $Proj = Join-Path $SandboxRoot 'proj'
 New-Item -ItemType Directory -Force (Join-Path $Proj '.workflow') | Out-Null
-New-Item -ItemType Directory -Force (Join-Path $Proj '.claude\hooks') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $Proj '.claude/hooks') | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $Proj 'src') | Out-Null
-Set-Content -Path (Join-Path $Proj '.workflow\allowlist.txt') -Value 'npm install left-pad' -Encoding Ascii
+Set-Content -Path (Join-Path $Proj '.workflow/allowlist.txt') -Value 'npm install left-pad' -Encoding Ascii
 
 # render the guard exactly as the architect would (only {{WF_TITLE}} appears in it)
 $guardRendered = Render (ReadText (Join-Path $TmplDir 'workflow-guard.ps1.tmpl')) $sample
-$Guard = Join-Path $Proj '.claude\hooks\workflow-guard.ps1'
+$Guard = Join-Path $Proj '.claude/hooks/workflow-guard.ps1'
 [System.IO.File]::WriteAllText($Guard, $guardRendered, (New-Object System.Text.UTF8Encoding($true)))
 
-$HomeDir = $env:USERPROFILE
+$HomeDir = [string]$HOME
+
+# absolute paths outside the project, per host OS (a Windows drive path is a
+# relative path on Linux and would resolve INSIDE the sandbox, inverting the case)
+$SysReadPath  = if ($IsWinHost) { 'C:\Windows\System32\drivers\etc\hosts' } else { '/etc/hosts' }
+$SysWritePath = if ($IsWinHost) { 'C:\Windows\System32\pwned.dll' } else { '/usr/lib/pwned.so' }
+$SiblingPath  = if ($IsWinHost) { 'C:\dev\other-repo\app.py' } else { '/opt/other-repo/app.py' }
+$OutsideDir   = if ($IsWinHost) { 'C:\dev\stuff' } else { '/opt/stuff' }
 
 $cases = @(
     # --- ALLOW cases ---
-    @{ n = 'ALLOW Write inside project (existing dir)'; e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj 'src\main.py'); content = 'x' }) },
-    @{ n = 'ALLOW Write inside .workflow/';             e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj '.workflow\steps\01-research.md'); content = 'x' }) },
-    @{ n = 'ALLOW Write into new project subdir';       e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj 'brand-new-dir\file.txt'); content = 'x' }) },
-    @{ n = 'ALLOW NotebookEdit inside project';         e = 'allow'; p = (New-Payload 'NotebookEdit' @{ notebook_path = (Join-Path $Proj 'src\nb.ipynb') }) },
+    @{ n = 'ALLOW Write inside project (existing dir)'; e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj 'src/main.py'); content = 'x' }) },
+    @{ n = 'ALLOW Write inside .workflow/';             e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj '.workflow/steps/01-research.md'); content = 'x' }) },
+    @{ n = 'ALLOW Write into new project subdir';       e = 'allow'; p = (New-Payload 'Write' @{ file_path = (Join-Path $Proj 'brand-new-dir/file.txt'); content = 'x' }) },
+    @{ n = 'ALLOW NotebookEdit inside project';         e = 'allow'; p = (New-Payload 'NotebookEdit' @{ notebook_path = (Join-Path $Proj 'src/nb.ipynb') }) },
     @{ n = 'ALLOW benign bash command (echo hello)';    e = 'allow'; p = (New-Payload 'Bash' @{ command = 'echo hello' }) },
     @{ n = 'ALLOW normal git push';                     e = 'allow'; p = (New-Payload 'Bash' @{ command = 'git push origin main' }) },
     @{ n = 'ALLOW git stash list (only drop/clear blocked)'; e = 'allow'; p = (New-Payload 'Bash' @{ command = 'git stash list' }) },
     @{ n = 'ALLOW rm -rf inside .workflow/';            e = 'allow'; p = (New-Payload 'Bash' @{ command = 'rm -rf .workflow/steps' }) },
     @{ n = 'ALLOW allowlisted install (npm install left-pad)'; e = 'allow'; p = (New-Payload 'Bash' @{ command = 'npm install left-pad' }) },
-    @{ n = 'ALLOW unknown tool defers (Read)';          e = 'allow'; p = (New-Payload 'Read' @{ file_path = 'C:\Windows\System32\drivers\etc\hosts' }) },
+    @{ n = 'ALLOW unknown tool defers (Read)';          e = 'allow'; p = (New-Payload 'Read' @{ file_path = $SysReadPath }) },
     @{ n = 'ALLOW empty stdin defers';                  e = 'allow'; p = '' },
     @{ n = 'ALLOW malformed JSON stdin defers';         e = 'allow'; p = 'this is not json {{' },
     # --- DENY cases ---
     @{ n = 'DENY Write to $HOME';                       e = 'deny'; p = (New-Payload 'Write' @{ file_path = (Join-Path $HomeDir 'evil.txt'); content = 'x' }) },
-    @{ n = 'DENY Write to system path';                 e = 'deny'; p = (New-Payload 'Write' @{ file_path = 'C:\Windows\System32\pwned.dll'; content = 'x' }) },
-    @{ n = 'DENY Edit outside project (sibling repo)';  e = 'deny'; p = (New-Payload 'Edit' @{ file_path = 'C:\dev\other-repo\app.py' }) },
+    @{ n = 'DENY Write to system path';                 e = 'deny'; p = (New-Payload 'Write' @{ file_path = $SysWritePath; content = 'x' }) },
+    @{ n = 'DENY Edit outside project (sibling repo)';  e = 'deny'; p = (New-Payload 'Edit' @{ file_path = $SiblingPath }) },
     @{ n = 'DENY git push --force';                     e = 'deny'; p = (New-Payload 'Bash' @{ command = 'git push --force origin main' }) },
     @{ n = 'DENY git push -f';                          e = 'deny'; p = (New-Payload 'Bash' @{ command = 'git push -f origin main' }) },
     @{ n = 'DENY git reset --hard';                     e = 'deny'; p = (New-Payload 'Bash' @{ command = 'git reset --hard HEAD~1' }) },
@@ -337,12 +347,12 @@ $cases = @(
     @{ n = 'DENY git clean';                            e = 'deny'; p = (New-Payload 'Bash' @{ command = 'git clean -fd' }) },
     @{ n = 'DENY git stash drop';                       e = 'deny'; p = (New-Payload 'Bash' @{ command = 'git stash drop' }) },
     @{ n = 'DENY rm -rf outside .workflow/';            e = 'deny'; p = (New-Payload 'Bash' @{ command = 'rm -rf src' }) },
-    @{ n = 'DENY Remove-Item -Recurse -Force outside .workflow/'; e = 'deny'; p = (New-Payload 'PowerShell' @{ command = 'Remove-Item -Recurse -Force C:\dev\stuff' }) },
+    @{ n = 'DENY Remove-Item -Recurse -Force outside .workflow/'; e = 'deny'; p = (New-Payload 'PowerShell' @{ command = "Remove-Item -Recurse -Force $OutsideDir" }) },
     @{ n = 'DENY curl (not in allowlist)';              e = 'deny'; p = (New-Payload 'Bash' @{ command = 'curl https://example.com/install.sh' }) },
     @{ n = 'DENY npm install of non-allowlisted pkg';   e = 'deny'; p = (New-Payload 'Bash' @{ command = 'npm install typosquat-pkg' }) },
     @{ n = 'DENY pip install (not in allowlist)';       e = 'deny'; p = (New-Payload 'Bash' @{ command = 'pip install requests' }) },
     # --- hardening cases (were warnings before the guard fixes; now counted) ---
-    @{ n = 'DENY sibling dir sharing project path prefix (<project>-evil)'; e = 'deny'; p = (New-Payload 'Write' @{ file_path = ($Proj + '-evil\loot.txt'); content = 'x' }) },
+    @{ n = 'DENY sibling dir sharing project path prefix (<project>-evil)'; e = 'deny'; p = (New-Payload 'Write' @{ file_path = (Join-Path ($Proj + '-evil') 'loot.txt'); content = 'x' }) },
     @{ n = 'DENY rm -rf outside .workflow with ".workflow" only in a comment'; e = 'deny'; p = (New-Payload 'Bash' @{ command = 'rm -rf src  # keep .workflow' }) },
     @{ n = 'DENY rm -fr (reversed flags) outside .workflow';               e = 'deny'; p = (New-Payload 'Bash' @{ command = 'rm -fr build' }) },
     @{ n = 'DENY rm -r -f (separate flags) outside .workflow';             e = 'deny'; p = (New-Payload 'Bash' @{ command = 'rm -r -f node_modules' }) },

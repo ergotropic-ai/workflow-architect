@@ -1,3 +1,11 @@
 #!/bin/sh
 # jq shim wrapper -- used by run-guard-tests.sh only when real jq is absent.
-exec python "$(dirname "$0")/jq_shim.py" "$@"
+# Finds whichever python interpreter the host has (python3 on mac/Linux,
+# python or the py launcher on Windows).
+for py in python3 python py; do
+  if "$py" -c '' >/dev/null 2>&1; then
+    exec "$py" "$(dirname "$0")/jq_shim.py" "$@"
+  fi
+done
+echo "jq shim: no python interpreter found (tried python3, python, py)" >&2
+exit 127
