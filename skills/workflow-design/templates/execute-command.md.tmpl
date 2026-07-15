@@ -1,0 +1,40 @@
+---
+description: "Execute an approved {{WF_TITLE}} plan (Phase 2 of 2 — autonomous)"
+disable-model-invocation: true
+---
+This is Phase 2 of 2: autonomous execution of an already-approved plan. It must
+run in a session started with bypass permissions
+(`claude --dangerously-skip-permissions`).
+
+PREFLIGHT — refuse to proceed unless ALL of these hold:
+1. `.workflow/plan.md` exists and its first line is `status: approved`. If not,
+   STOP: tell the user to run `/{{WF}}` first.
+2. `.claude/hooks/{{GUARD_HOOK}}` exists AND `.claude/settings.local.json`
+   registers the workflow-guard PreToolUse hook and the deny rules. If missing,
+   install them from README-{{WF}}.md, then tell the user to restart Claude Code
+   (hooks load at session start).
+3. The session was started with bypass permissions. If permission prompts appear,
+   STOP and tell the user to relaunch per the README.
+
+Then delegate to the `{{WF}}-orchestrator` subagent to run the plan.
+
+EXECUTION RULES (permissions are off — you are self-constraining, and the guard
+hook enforces these mechanically):
+- All writes stay inside the project directory and `.workflow/`. Never `$HOME`,
+  system paths, or other repositories.
+- No destructive git: no force push, no `reset --hard`, no branch deletion, no
+  `rm -rf` outside `.workflow/`.
+- Network calls and package installs only if matched by
+  `.workflow/allowlist.txt`.
+- Anything not within `.workflow/plan.md`'s stated scope: STOP, write the reason
+  to `.workflow/replan-needed.md`, and tell the user to re-run `/{{WF}}`. Never
+  improvise.
+- After each step: append to `.workflow/log.md` and checkpoint
+  `.workflow/state.md`.
+
+FINISH:
+- Run the verification step defined in the plan.
+- Spawn a fresh-context reviewer subagent to check the diff against
+  `.workflow/plan.md`, reporting gaps that affect correctness or the stated
+  requirements (not style).
+- Report every file created or modified, with absolute paths.

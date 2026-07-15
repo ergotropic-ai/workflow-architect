@@ -1,0 +1,129 @@
+# workflow-guard.ps1 — PreToolUse guard hook for the {{WF_TITLE}} workflow.
+# Reads hook JSON from stdin. Blocks by printing a deny decision to stdout and
+# exiting 0. Defers (allows normal flow) by exiting 0 with no JSON.
+#
+# Register in .claude/settings.local.json with:  "shell": "powershell"
+
+$ErrorActionPreference = 'Stop'
+
+function Deny([string]$reason) {
+  $out = @{
+    hookSpecificOutput = @{
+      hookEventName            = 'PreToolUse'
+      permissionDecision       = 'deny'
+      permissionDecisionReason = "workflow-guard: $reason"
+    }
+  }
+  $out | ConvertTo-Json -Depth 6 -Compress
+  exit 0
+}
+
+# --- read input -------------------------------------------------------------
+# NOTE: do NOT name this $input — that is a read-only PowerShell automatic
+# variable and assignments to it are silently discarded (the guard would then
+# read null and allow everything). Use $hookInput.
+$raw = [Console]::In.ReadToEnd()
+if (-not $raw) { exit 0 }
+try { $hookInput = $raw | ConvertFrom-Json } catch { exit 0 }
+
+$projectDir = $env:CLAUDE_PROJECT_DIR
+if (-not $projectDir) { $projectDir = (Get-Location).Path }
+$projectFull = [System.IO.Path]::GetFullPath($projectDir)
+$workflowFull = [System.IO.Path]::GetFullPath((Join-Path $projectFull '.workflow'))
+
+# Resolve a path (relative paths are resolved against the project dir, not the
+# hook process's cwd) and return $true only if it is the root itself or lies
+# strictly beneath it on a path-separator boundary. A bare prefix match would
+# let a sibling like '<project>-evil' escape; the boundary check prevents that.
+function Inside([string]$path, [string]$root) {
+  if (-not $path) { return $false }
+  try {
+    if ([System.IO.Path]::IsPathRooted($path)) {
+      $full = [System.IO.Path]::GetFullPath($path)
+    } else {
+      $full = [System.IO.Path]::GetFullPath((Join-Path $projectFull $path))
+    }
+  } catch { return $false }
+  $r = $root.TrimEnd('\', '/')
+  if ($full.Equals($r, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+  return $full.StartsWith($r + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+$tool = $hookInput.tool_name
+
+# --- Write / Edit / NotebookEdit: confine to project (incl. .workflow) -------
+if ($tool -in @('Write', 'Edit', 'NotebookEdit')) {
+  $fp = $hookInput.tool_input.file_path
+  if (-not $fp) { $fp = $hookInput.tool_input.notebook_path }
+  if (-not (Inside $fp $projectFull)) {
+    Deny "write target '$fp' is outside the project directory"
+  }
+  exit 0
+}
+
+# --- Bash / PowerShell: inspect the command ---------------------------------
+if ($tool -in @('Bash', 'PowerShell')) {
+  $cmd = $hookInput.tool_input.command
+  if (-not $cmd) { exit 0 }
+
+  # destructive git
+  # force push: catch --force, --force-with-lease, and -f in any flag position
+  # (e.g. 'git push origin -f', 'git push -f origin', 'git push --force').
+  if ($cmd -match 'git\s+push\b' -and
+      $cmd -match '(--force(-with-lease)?\b|(^|\s)-f(\s|$))') { Deny 'force push is not allowed' }
+  if ($cmd -match 'git\s+reset\s+--hard')       { Deny 'git reset --hard is not allowed' }
+  if ($cmd -match 'git\s+branch\s+-[dD]\b')     { Deny 'branch deletion is not allowed' }
+  if ($cmd -match 'git\s+clean\b')              { Deny 'git clean is not allowed' }
+  if ($cmd -match 'git\s+stash\s+(drop|clear)') { Deny 'git stash drop/clear is not allowed' }
+
+  # recursive force delete: allowed ONLY when every target path is inside
+  # .workflow/. Detect rm -rf/-fr/-r -f and Remove-Item -Recurse -Force in any
+  # flag order, then verify the actual targets (not just that the string
+  # '.workflow' appears somewhere in the command).
+  $recursiveDelete = $false
+  if ($cmd -match '(?i)\brm\b') {
+    if ($cmd -match '(?i)(^|\s)-[a-z]*r[a-z]*f|(^|\s)-[a-z]*f[a-z]*r') { $recursiveDelete = $true }
+    if ($cmd -match '(?i)(^|\s)-[a-z]*r' -and $cmd -match '(?i)(^|\s)-[a-z]*f') { $recursiveDelete = $true }
+  }
+  if ($cmd -match '(?i)Remove-Item' -and $cmd -match '(?i)-Recurse' -and $cmd -match '(?i)-Force') {
+    $recursiveDelete = $true
+  }
+  if ($recursiveDelete) {
+    $clean = $cmd -replace '#.*$', ''
+    $targets = @()
+    foreach ($tok in ($clean -split '\s+')) {
+      if (-not $tok) { continue }
+      if ($tok -match '(?i)^(rm|Remove-Item|ri|del|sudo)$') { continue }
+      if ($tok -match '^-') { continue }
+      if ($tok -match '^[|;&<>]+$') { continue }
+      $targets += $tok
+    }
+    if ($targets.Count -eq 0) { Deny 'recursive force delete with no identifiable target' }
+    foreach ($t in $targets) {
+      if (-not (Inside $t $workflowFull)) {
+        Deny "recursive force delete target '$t' is only allowed inside .workflow/"
+      }
+    }
+  }
+
+  # network / install commands need an allowlist entry. Match on token
+  # boundaries so benign commands (e.g. 'echo chocolate') do not trip 'choco'.
+  $netPattern = '(?i)(\bcurl\b|\bwget\b|\bInvoke-WebRequest\b|\bInvoke-RestMethod\b|\bnpm\s+install\b|\bnpm\s+i\b|\bpip3?\s+install\b|\bpnpm\s+add\b|\byarn\s+add\b|\bcargo\s+add\b|\buv\s+add\b|\bwinget\b|\bchoco\b|\bapt(-get)?\s+install\b|\bbrew\s+install\b)'
+  if ($cmd -match $netPattern) {
+    $allowFile = Join-Path $workflowFull 'allowlist.txt'
+    $allowed = $false
+    if (Test-Path $allowFile) {
+      foreach ($line in Get-Content $allowFile) {
+        $pat = $line.Trim()
+        if ($pat -and $cmd -like "*$pat*") { $allowed = $true; break }
+      }
+    }
+    if (-not $allowed) {
+      Deny 'network/install command not present in .workflow/allowlist.txt'
+    }
+  }
+
+  exit 0
+}
+
+exit 0

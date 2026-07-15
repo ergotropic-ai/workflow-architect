@@ -1,0 +1,50 @@
+---
+description: "Plan a {{WF_TITLE}} run (Phase 1 of 2 — read-only, gated)"
+argument-hint: "{{PARAMS}}"
+disable-model-invocation: true
+---
+STEP 0 — MANDATORY: call EnterPlanMode now, before anything else. If you cannot
+enter plan mode (e.g. it is unavailable in this context), STOP and tell the user
+to relaunch with:
+
+    claude --permission-mode plan
+
+Never begin execution from this command. This is Phase 1 of 2: read-only planning.
+
+Inputs for this run:
+
+    $ARGUMENTS
+
+STEP 1 — Discovery (read-only). Delegate research to the `{{WF}}-planner`
+subagent (its frontmatter sets `permissionMode: plan`, so it stays read-only).
+Gather everything needed to produce a concrete plan.
+
+STEP 2 — Present the plan. It MUST contain these literal sections:
+
+    ## Steps              (ordered; the subagent + model tier per step)
+    ## Agents             (roster; effort budget per agent)
+    ## Files touched      (every file/dir to be created or modified)
+    ## Commands           (every shell command class to be executed)
+    ## Network & installs (explicit allowlist; empty means none permitted)
+    ## Scope estimate     (size of change + token-cost class: 1x / ~4x / ~15x)
+
+STEP 3 — On plan approval (the single human gate for this run):
+  1. Create the `.workflow/` directory if absent.
+  2. Write the approved plan verbatim to `.workflow/plan.md` with a first line
+     `status: approved`.
+  3. Write `.workflow/allowlist.txt` — one permitted network/install command
+     pattern per line, taken ONLY from the plan's `## Network & installs`
+     section. If none were approved, create the file empty.
+  4. STOP and print the Phase 2 relaunch instructions:
+
+         Plan approved and saved to .workflow/plan.md.
+         To execute autonomously, relaunch in a fresh, isolated session:
+
+             claude --dangerously-skip-permissions
+             > /{{WF}}-execute
+
+         (Alternative, keeps planning context at higher token cost:
+             claude --continue --dangerously-skip-permissions )
+
+         WARNING: run Phase 2 only inside a container, VM, or dedicated sandbox
+         directory. See README-{{WF}}.md.

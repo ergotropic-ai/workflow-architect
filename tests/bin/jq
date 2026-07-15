@@ -1,0 +1,3 @@
+#!/bin/sh
+# jq shim wrapper -- used by run-guard-tests.sh only when real jq is absent.
+exec python "$(dirname "$0")/jq_shim.py" "$@"

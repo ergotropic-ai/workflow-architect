@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# workflow-guard.sh — PreToolUse guard hook for the {{WF_TITLE}} workflow.
+# Reads hook JSON from stdin. Blocks by printing a deny decision to stdout and
+# exiting 0. Defers (allows normal flow) by exiting 0 with no JSON.
+# Requires: jq. If jq is missing the guard fails CLOSED (denies) rather than
+# letting the action through.
+#
+# Register in .claude/settings.local.json without a "shell" field (default bash).
+set -uo pipefail
+
+deny() {
+  # Emit the deny decision. Built without jq so it also works on the jq-missing
+  # path; escape backslashes and double quotes in the reason for valid JSON.
+  local reason="workflow-guard: $1"
+  reason="${reason//\\/\\\\}"
+  reason="${reason//\"/\\\"}"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
+  exit 0
+}
+
+# Fail closed if jq is unavailable — without it we cannot parse the hook JSON,
+# and exiting non-zero would let Claude Code treat the hook as a non-blocking
+# error and proceed unguarded.
+command -v jq >/dev/null 2>&1 || deny "jq is required but not installed; failing closed"
+
+INPUT="$(cat || true)"
+[ -z "$INPUT" ] && exit 0
+
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_FULL="$(cd "$PROJECT_DIR" 2>/dev/null && pwd || echo "$PROJECT_DIR")"
+WORKFLOW_FULL="$PROJECT_FULL/.workflow"
+
+TOOL="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
+
+# Normalize a path string (resolve '.' and '..', collapse '//') WITHOUT touching
+# the filesystem, so writes into not-yet-existing dirs (e.g. .workflow/steps/)
+# are handled correctly rather than being mangled by a cd into a missing dir.
+normalize() {
+  local path="$1" part
+  local -a out=()
+  local IFS=/
+  for part in $path; do
+    case "$part" in
+      ''|.) ;;
+      ..) [ "${#out[@]}" -gt 0 ] && unset 'out[${#out[@]}-1]' ;;
+      *) out+=("$part") ;;
+    esac
+  done
+  local joined="" p
+  for p in "${out[@]}"; do joined="$joined/$p"; done
+  [ -z "$joined" ] && joined="/"
+  printf '%s' "$joined"
+}
+
+# inside <path> <root> -> 0 if <path> is <root> or lies strictly beneath it on a
+# separator boundary. Relative paths resolve against the project dir. The
+# boundary check (not a bare prefix) stops sibling escapes like '<project>-evil'.
+inside() {
+  local p="$1" root="$2" full
+  [ -z "$p" ] && return 1
+  case "$p" in
+    /*) full="$p" ;;
+    *)  full="$PROJECT_FULL/$p" ;;
+  esac
+  full="$(normalize "$full")"
+  root="$(normalize "$root")"
+  [ "$full" = "$root" ] && return 0
+  case "$full" in
+    "$root"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+case "$TOOL" in
+  Write|Edit|NotebookEdit)
+    FP="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
+    if ! inside "$FP" "$PROJECT_FULL"; then
+      deny "write target '$FP' is outside the project directory"
+    fi
+    exit 0
+    ;;
+  Bash|PowerShell)
+    CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
+    [ -z "$CMD" ] && exit 0
+
+    # force push: --force, --force-with-lease, or -f in any flag position.
+    if echo "$CMD" | grep -Eq 'git[[:space:]]+push\b'; then
+      echo "$CMD" | grep -Eq -- '--force(-with-lease)?|(^|[[:space:]])-f([[:space:]]|$)' \
+        && deny "force push is not allowed"
+    fi
+    echo "$CMD" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'       && deny "git reset --hard is not allowed"
+    echo "$CMD" | grep -Eq 'git[[:space:]]+branch[[:space:]]+-[dD]\b'     && deny "branch deletion is not allowed"
+    echo "$CMD" | grep -Eq 'git[[:space:]]+clean\b'                       && deny "git clean is not allowed"
+    echo "$CMD" | grep -Eq 'git[[:space:]]+stash[[:space:]]+(drop|clear)' && deny "git stash drop/clear is not allowed"
+
+    # recursive force delete: allowed only if EVERY target is inside .workflow/.
+    # Detect rm -rf/-fr/-r -f and Remove-Item -Recurse -Force in any flag order,
+    # then verify actual targets rather than grepping for '.workflow' anywhere.
+    CLEAN="${CMD%%#*}"
+    RECURSIVE=0
+    if echo "$CLEAN" | grep -Eq '\brm\b'; then
+      if echo "$CLEAN" | grep -Eq '(^|[[:space:]])-[a-zA-Z]*r[a-zA-Z]*f|(^|[[:space:]])-[a-zA-Z]*f[a-zA-Z]*r'; then RECURSIVE=1; fi
+      if echo "$CLEAN" | grep -Eq '(^|[[:space:]])-[a-zA-Z]*r' && echo "$CLEAN" | grep -Eq '(^|[[:space:]])-[a-zA-Z]*f'; then RECURSIVE=1; fi
+    fi
+    if echo "$CLEAN" | grep -Eqi 'Remove-Item' && echo "$CLEAN" | grep -Eqi -- '-Recurse' && echo "$CLEAN" | grep -Eqi -- '-Force'; then
+      RECURSIVE=1
+    fi
+    if [ "$RECURSIVE" -eq 1 ]; then
+      FOUND=0
+      for tok in $CLEAN; do
+        case "$tok" in
+          rm|Rm|RM|Remove-Item|remove-item|ri|del|sudo) continue ;;
+          -*) continue ;;
+          '|'|';'|'&'|'&&'|'>'|'>>'|'<') continue ;;
+        esac
+        FOUND=1
+        inside "$tok" "$WORKFLOW_FULL" || deny "recursive force delete target '$tok' is only allowed inside .workflow/"
+      done
+      [ "$FOUND" -eq 0 ] && deny "recursive force delete with no identifiable target"
+    fi
+
+    # network/install commands need an allowlist entry. Token boundaries prevent
+    # false positives (e.g. 'echo chocolate' must not trip 'choco').
+    NET='(\bcurl\b|\bwget\b|\bInvoke-WebRequest\b|\bInvoke-RestMethod\b|\bnpm[[:space:]]+install\b|\bnpm[[:space:]]+i\b|\bpip3?[[:space:]]+install\b|\bpnpm[[:space:]]+add\b|\byarn[[:space:]]+add\b|\bcargo[[:space:]]+add\b|\buv[[:space:]]+add\b|\bwinget\b|\bchoco\b|\bapt(-get)?[[:space:]]+install\b|\bbrew[[:space:]]+install\b)'
+    if echo "$CMD" | grep -Eq "$NET"; then
+      ALLOW="$WORKFLOW_FULL/allowlist.txt"
+      OK=1
+      if [ -f "$ALLOW" ]; then
+        while IFS= read -r pat; do
+          pat="$(printf '%s' "$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          [ -z "$pat" ] && continue
+          case "$CMD" in *"$pat"*) OK=0; break ;; esac
+        done < "$ALLOW"
+      fi
+      [ "$OK" -eq 0 ] || deny "network/install command not present in .workflow/allowlist.txt"
+    fi
+
+    exit 0
+    ;;
+esac
+
+exit 0
