@@ -43,6 +43,24 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         jq: [present, absent]
+        exclude:
+          # COVERAGE GAP, stated rather than faked: macOS ships jq at
+          # /usr/bin/jq on the read-only signed system volume, so it cannot be
+          # removed even with sudo ("rm: /usr/bin/jq: Read-only file system").
+          # Removing only the homebrew copy leaves the system one on PATH, which
+          # would make this job a silent duplicate of macos/jq-present -- exactly
+          # the green-tick-proving-nothing this matrix is built to avoid, so the
+          # configuration is dropped instead of simulated.
+          #
+          # What still covers the jq-absent paths:
+          #   - the python shim: exercised on ubuntu AND windows (the shim is
+          #     stdlib-only, so its logic is not OS-dependent);
+          #   - fail-closed-without-jq: exercised on macOS too, by the suite's
+          #     own PATH-stripped case, which runs in the macos/jq-present job.
+          # Residual gap: tests/bin/jq's interpreter probe (python3/python/py)
+          # is never exercised on macOS.
+          - os: macos-latest
+            jq: absent
         include:
           # /bin/sh is dash ONLY on Ubuntu. Declaring it means the day the image
           # changes, this job fails loudly instead of quietly testing bash twice
@@ -87,15 +105,18 @@ jobs:
         # re-verifies the removal (WFA_EXPECT_JQ=absent) before running a single
         # test -- without that, a failed removal here would turn this job into a
         # silent copy of the jq-present job.
+        # Runners can carry more than one jq (macOS had both a homebrew and a
+        # system copy), so remove until PATH is clear rather than once. A copy
+        # that cannot be removed is fatal here: leaving it would turn this job
+        # into a silent duplicate of the jq-present one.
         run: |
           while p="$(command -v jq 2>/dev/null)"; do
             echo "removing $p"
-            rm -f "$p" 2>/dev/null || sudo rm -f "$p"
+            rm -f "$p" 2>/dev/null || sudo rm -f "$p" \
+              || { echo "FATAL: cannot remove $p -- this job cannot exercise the jq-absent path"; exit 1; }
+            hash -r 2>/dev/null || true   # bash caches resolved command paths
           done
-          if command -v jq >/dev/null 2>&1; then
-            echo "FATAL: jq still on PATH at $(command -v jq); cannot test the shim path"; exit 1
-          fi
-          echo "jq removed"
+          echo "jq removed from PATH"
 
       - name: Run harness
         env:
