@@ -70,11 +70,18 @@ for p in python3 python py; do if command -v "$p" >/dev/null 2>&1 && "$p" -c '' 
 # Probe every PowerShell engine present. 5.1 and 7 are different engines and the
 # guard's worst historical defect ($input as an automatic variable) reproduced
 # ONLY on 5.1 -- so both are run when both exist.
-PS_ENGINES=""; PS_DESC=""
+PS_ENGINES=""; PS_DESC=""; PS_SEEN=""
 for e in powershell pwsh; do
   command -v "$e" >/dev/null 2>&1 || continue
   v="$("$e" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>/dev/null | tr -d '\r')"
   [ -z "$v" ] && continue
+  # Dedupe by version: on macOS/Linux `powershell` and `pwsh` are two names for
+  # the same 7.x binary, and running the suite twice under it proves nothing
+  # extra. On Windows they are genuinely different engines (5.1 vs 7.x) and both
+  # are kept -- which is the point of probing, since the guard's worst defect
+  # reproduced only on 5.1.
+  case " $PS_SEEN " in *" $v "*) PS_DESC="$PS_DESC $e=$v(same engine as above, skipped)"; continue ;; esac
+  PS_SEEN="$PS_SEEN $v"
   PS_ENGINES="$PS_ENGINES $e"; PS_DESC="$PS_DESC $e=$v"
 done
 [ -z "$PS_DESC" ] && PS_DESC=" ABSENT"

@@ -214,7 +214,19 @@ Check-Frontmatter 'skills/workflow-design/SKILL.md' (ReadText (Join-Path $SkillD
 $cmdText = ReadText (Join-Path $ClaudeRoot 'commands/design-workflow.md')
 $includeOk = $false
 if ($cmdText -match '@~([^\s]+)') {
-    $incPath = Join-Path $HOME ($Matches[1].TrimStart('/'))
+    $rel = $Matches[1].TrimStart('/')
+    # The include is written '@~/.claude/...' because that is what Claude Code
+    # resolves against the real HOME at runtime. Under test, however, the
+    # installation under test is $ClaudeRoot -- $HOME/.claude by default, but
+    # redirected by CLAUDE_HOME. Map the '.claude/' prefix onto $ClaudeRoot so
+    # this checks the artifact actually being tested.
+    #
+    # Resolving against $HOME unconditionally (as this did) made the test assert
+    # the presence of some OTHER installation -- in practice the developer's own
+    # real one -- so it passed on a machine with ~/.claude populated no matter
+    # what state the system under test was in, and failed on a clean runner.
+    if ($rel -match '^\.claude[/\\](.+)$') { $incPath = Join-Path $ClaudeRoot $Matches[1] }
+    else                                   { $incPath = Join-Path $HOME $rel }
     $includeOk = Test-Path $incPath
     Record TEST 'design-workflow.md @-include target exists' $includeOk "resolved '$incPath' not found"
 } else {
