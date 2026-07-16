@@ -84,6 +84,34 @@ these caught.
 Both suites test the **installed** copy under `~/.claude`, so run the installer
 first (set `CLAUDE_HOME` to test a different install root).
 
+### CI
+
+`tests/ci.sh` is the single harness CI runs, and it runs locally too:
+
+```bash
+bash tests/ci.sh
+```
+
+It installs to a scratch root, prints an environment banner (OS, arch, shells,
+which jq it found and therefore **which guard code path that selects**), and adds
+packaging tests the suites don't cover: LF/BOM checks and exec bits against a
+*clean clone*, plus the installer contract (`--dry-run`/`-WhatIf` write nothing,
+`.bak` backup, `CLAUDE_HOME` redirection). It probes for optional tools instead
+of requiring them; a missing tool is a counted, reasoned **skip**, never a pass.
+
+CI runs it across `{ubuntu, macos, windows} × {jq present, jq absent}`, and each
+job *declares* the configuration it exists to prove (`WFA_EXPECT_JQ`,
+`WFA_EXPECT_SH`, `WFA_EXPECT_PS`). The harness aborts if reality doesn't match,
+so a job can't silently degrade into a duplicate of another and report green.
+Windows runs the PowerShell suite under **both** 5.1 and pwsh 7 — not
+interchangeable, since the guard's worst defect was silently discarded on 5.1.
+
+**Known gap:** `macos × jq-absent` is excluded. macOS ships jq at `/usr/bin/jq`
+on the read-only signed system volume and it cannot be removed, so the job would
+be a silent duplicate of `macos × jq-present`. The shim path is covered on ubuntu
+and windows; fail-closed-without-jq is still covered on macOS by the suite's own
+PATH-stripped case. See the comment in `.github/workflows/ci.yml`.
+
 ## Layout
 
 ```

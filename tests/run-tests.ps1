@@ -4,12 +4,10 @@
 #
 # Sections:
 #   [S]  static / structural tests (frontmatter, JSON, token consistency)
+#   [P]  portability (generated artifacts must not encode the generating OS)
 #   [B]  behavioral tests of workflow-guard.ps1 (the system under test, as-is)
-#   [D]  diagnostic re-run of [B] against a locally PATCHED copy of the guard
-#        (isolates root cause; does NOT modify the system under test)
-#   [W]  hardening probes (known-gap checks; reported as warnings, not failures)
 #
-# Exit code: 1 if any [S] or [B] test fails, else 0.
+# Exit code: 1 if any test fails, else 0.
 
 $ErrorActionPreference = 'Stop'
 

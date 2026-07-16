@@ -68,13 +68,11 @@ sandboxes can be deleted at any time.
     `git branch -D`, `git clean`, `git stash drop`, `rm -rf` outside
     `.workflow/`, `Remove-Item -Recurse -Force` outside `.workflow/`,
     `curl`, non-allowlisted `npm install`, `pip install`.
-- **[D] Diagnostic** — the same behavioral cases re-run against a locally
-  *patched copy* of the guard (`$input` renamed to `$hookInput`). This
-  isolates the root cause of section-B failures without modifying the
-  system under test.
-- **[W] Hardening probes** — known-gap checks run as warnings (path-prefix
-  sibling bypass, `.workflow`-substring bypass of the `rm -rf` check,
-  `choco` substring false positive, `git push origin -f` ordering bypass).
+Sections `[D]` (diagnostic re-run against a patched guard) and `[W]`
+(hardening probes as warnings) no longer exist. They were scaffolding for
+diagnosing the defects listed below; once those were fixed, their cases
+became ordinary counted `[B]` tests. The `Record` helper still accepts
+`DIAG`/`WARN` kinds, but nothing calls them.
 
 ### `run-guard-tests.sh`
 
