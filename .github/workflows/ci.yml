@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The YAML picks the configuration; tests/ci.sh does the work. Every job runs
+# the same harness and DECLARES the configuration it exists to exercise via
+# WFA_EXPECT_*. The harness aborts if reality does not match, so a job can never
+# silently degrade into a duplicate of another and report a green tick.
+#
+# Run any of these locally with: bash tests/ci.sh
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suites:
+    # Matrix dimensions are limited to those that can fail DIFFERENTLY:
+    #
+    #   os  -- ubuntu is the only runner where /bin/sh is really dash (the case
+    #          the guard's `bash` wrapper exists to survive); macos brings bash
+    #          3.2; windows brings Git Bash + Windows PowerShell 5.1.
+    #   jq  -- two genuinely different code paths through the guard: real jq,
+    #          and the python shim. The suite's own PATH-stripped case covers
+    #          the third (neither present -> fail closed).
+    #
+    # Deliberately NOT matrixed, because neither can fail differently from a
+    # dimension already present:
+    #   arch    -- everything here is shell and PowerShell; there is no compiled
+    #              artifact and no arch-dependent behavior. macos-latest is
+    #              arm64 and ubuntu is x64, so both are covered incidentally.
+    #   python  -- the jq shim uses only stdlib json.
+    #   bash ver-- real, but wholly subsumed by the os dimension.
+    name: ${{ matrix.os }} · jq-${{ matrix.jq }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not hide the others' results.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        jq: [present, absent]
+        include:
+          # /bin/sh is dash ONLY on Ubuntu. Declaring it means the day the image
+          # changes, this job fails loudly instead of quietly testing bash twice
+          # and leaving the dash claim unproven.
+          - os: ubuntu-latest
+            expect_sh: dash
+            expect_ps: core
+          - os: macos-latest
+            expect_sh: bash
+            expect_ps: core
+          - os: windows-latest
+            expect_sh: bash
+            # Windows PowerShell 5.1 is not interchangeable with pwsh 7 here:
+            # the guard's worst historical defect (assigning to $input, a
+            # read-only automatic variable) was silently discarded on 5.1 and
+            # made the guard a no-op. The harness runs every engine it finds,
+            # so the windows jobs exercise 5.1 AND 7.
+            expect_ps: '51'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The harness makes a clean clone of the checkout to test packaging;
+          # give it real history to clone from.
+          fetch-depth: 0
+
+      - name: Configure jq = present
+        if: matrix.jq == 'present'
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            case "${{ runner.os }}" in
+              Linux)   sudo apt-get update -qq && sudo apt-get install -y jq ;;
+              macOS)   brew install jq ;;
+              Windows) choco install jq -y ;;
+            esac
+          fi
+          command -v jq && jq --version
+
+      - name: Configure jq = absent
+        if: matrix.jq == 'absent'
+        # Remove the real jq so the guard takes the shim path. The harness
+        # re-verifies the removal (WFA_EXPECT_JQ=absent) before running a single
+        # test -- without that, a failed removal here would turn this job into a
+        # silent copy of the jq-present job.
+        run: |
+          while p="$(command -v jq 2>/dev/null)"; do
+            echo "removing $p"
+            rm -f "$p" 2>/dev/null || sudo rm -f "$p"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "FATAL: jq still on PATH at $(command -v jq); cannot test the shim path"; exit 1
+          fi
+          echo "jq removed"
+
+      - name: Run harness
+        env:
+          WFA_EXPECT_JQ: ${{ matrix.jq }}
+          WFA_EXPECT_SH: ${{ matrix.expect_sh }}
+          WFA_EXPECT_PS: ${{ matrix.expect_ps }}
+          # The README claims these counts. Pinned so a test that silently stops
+          # running is a red build rather than a smaller green one.
+          WFA_EXPECT_BASH_SUITE: '41'
+          WFA_EXPECT_PS_SUITE: '105'
+        run: bash tests/ci.sh
